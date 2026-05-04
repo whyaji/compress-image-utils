@@ -8,7 +8,7 @@ const rl = readline.createInterface({
   output: process.stdout,
 });
 
-const TEMP_BASE_DIR = 'c:\\Users\\wahyu.patriaji\\Project\\compress-image-service\\temp';
+const TEMP_BASE_DIR = path.join(process.cwd(), 'temp');
 
 async function compressImageToSize(
   inputPath: string,

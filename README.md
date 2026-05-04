@@ -8,7 +8,7 @@ A powerful, interactive command-line utility built with [Bun](https://bun.sh/) a
 - **Size Filtering**: Only targets images that are larger than a specified minimum file size.
 - **Smart Target Size**: Uses a binary search algorithm to intelligently adjust image quality, aiming to get the image as close to your requested max file size as possible.
 - **Optional Resizing**: Allows setting a maximum height (in pixels). Large images will be resized down to this height while preserving their original aspect ratio.
-- **Automatic Backups**: Safely copies original images to a local `temp/YYYYMMDD/HHMM` directory within this project before overwriting the originals with the compressed versions.
+- **Automatic Backups**: Safely copies original images to a local `temp/YYYYMMDD/HHMMSS` directory within this project before overwriting the originals with the compressed versions.
 - **Detailed Reporting**: Generates a detailed `info.json` report in the backup directory containing all run configurations and a breakdown of original vs. compressed sizes for each file.
 
 ## Prerequisites
