@@ -98,6 +98,11 @@ async function compressImageToSize(
 async function main() {
   try {
     const inputFolder = await rl.question('Enter input folder path: ');
+    const isRecursiveInput = await rl.question('Process recursively through subfolders? (y/n): ');
+    const isRecursive = isRecursiveInput.toLowerCase().trim() === 'y';
+    const isBackupInput = await rl.question('Backup original images to temp folder? (y/n): ');
+    const isBackup = isBackupInput.toLowerCase().trim() === 'y';
+
     const minOriginalSizeInput = await rl.question(
       'Enter minimum original file size to compress (in KB): '
     );
@@ -145,24 +150,37 @@ async function main() {
       String(now.getMinutes()).padStart(2, '0') +
       String(now.getSeconds()).padStart(2, '0');
 
-    const backupDir = path.join(TEMP_BASE_DIR, dateStr, timeStr);
-    await fs.mkdir(backupDir, { recursive: true });
+    let backupDir = '';
+    if (isBackup) {
+      backupDir = path.join(TEMP_BASE_DIR, dateStr, timeStr);
+      await fs.mkdir(backupDir, { recursive: true });
+    }
 
     // Read all files
-    const files = await fs.readdir(inputFolder);
     const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.tiff', '.bmp', '.gif'];
+    const imagesToProcess: string[] = [];
 
-    const imagesToProcess = [];
-    for (const file of files) {
-      const ext = path.extname(file).toLowerCase();
-      if (imageExtensions.includes(ext)) {
-        const filePath = path.join(inputFolder, file);
-        const fileStat = await fs.stat(filePath);
-        if (fileStat.size >= minOriginalSizeBytes) {
-          imagesToProcess.push(file);
+    async function findImages(dirPath: string) {
+      const files = await fs.readdir(dirPath, { withFileTypes: true });
+      for (const file of files) {
+        const fullPath = path.join(dirPath, file.name);
+        if (file.isDirectory()) {
+          if (isRecursive) {
+            await findImages(fullPath);
+          }
+        } else {
+          const ext = path.extname(file.name).toLowerCase();
+          if (imageExtensions.includes(ext)) {
+            const fileStat = await fs.stat(fullPath);
+            if (fileStat.size >= minOriginalSizeBytes) {
+              imagesToProcess.push(fullPath);
+            }
+          }
         }
       }
     }
+
+    await findImages(inputFolder);
 
     if (imagesToProcess.length === 0) {
       console.log(
@@ -173,6 +191,8 @@ async function main() {
 
     console.log('\n=== COMPRESSION SUMMARY ===');
     console.log(`Target Folder: ${inputFolder}`);
+    console.log(`Recursive: ${isRecursive ? 'Yes' : 'No'}`);
+    console.log(`Backup Originals: ${isBackup ? 'Yes' : 'No'}`);
     console.log(`Min Original Size: ${minOriginalSizeInput} KB`);
     console.log(`Target Max Size: ${maxSizeInput} KB`);
     console.log(`Max Height: ${maxHeight ? maxHeight + 'px' : 'None'}`);
@@ -186,51 +206,96 @@ async function main() {
     }
 
     console.log(`\nStarting compression...`);
-    console.log(`Original images will be backed up to: ${backupDir}\n`);
+    if (isBackup) {
+      console.log(`Original images will be backed up to: ${backupDir}\n`);
+    } else {
+      console.log(`WARNING: Originals will be overwritten without backup!\n`);
+    }
 
     const infoList = [];
+    const totalImages = imagesToProcess.length;
+    let processedImages = 0;
 
-    for (const file of imagesToProcess) {
-      const originalPath = path.join(inputFolder, file);
-      const backupPath = path.join(backupDir, file);
-
-      // 1. Backup original
-      await fs.copyFile(originalPath, backupPath);
+    for (const originalPath of imagesToProcess) {
+      const relativePath = path.relative(inputFolder, originalPath);
+      let backupPath = '';
+      let pathForCompressionInput = originalPath;
 
       const originalStat = await fs.stat(originalPath);
       const originalSize = originalStat.size;
 
-      // 2. Compress and save to original path
-      process.stdout.write(`Compressing ${file}... `);
-      const newSize = await compressImageToSize(backupPath, originalPath, maxSizeBytes, maxHeight);
+      if (isBackup) {
+        backupPath = path.join(backupDir, relativePath);
+        // Create subdirectories in backup folder if needed
+        await fs.mkdir(path.dirname(backupPath), { recursive: true });
 
+        // 1. Backup original
+        await fs.copyFile(originalPath, backupPath);
+        pathForCompressionInput = backupPath;
+      }
+
+      // 2. Compress and save to original path
+      const percentage = Math.round((processedImages / totalImages) * 100);
+      const filledBarLength = Math.round((processedImages / totalImages) * 40);
+      const filledBar = '█'.repeat(filledBarLength);
+      const emptyBar = '░'.repeat(40 - filledBarLength);
+      const shortPath = relativePath.length > 30 ? '...' + relativePath.slice(-27) : relativePath;
+
+      process.stdout.write(
+        `\r\x1b[KProgress: [${filledBar}${emptyBar}] ${percentage}% (${processedImages}/${totalImages}) | Compressing: ${shortPath}`
+      );
+
+      const newSize = await compressImageToSize(
+        pathForCompressionInput,
+        originalPath,
+        maxSizeBytes,
+        maxHeight
+      );
+
+      // Clear progress bar line to print log
+      process.stdout.write('\r\x1b[K');
       console.log(
-        `Done. Original: ${(originalSize / 1024).toFixed(2)} KB -> Compressed: ${(newSize / 1024).toFixed(2)} KB`
+        `Done: ${shortPath} | ${(originalSize / 1024).toFixed(2)} KB -> ${(newSize / 1024).toFixed(2)} KB`
+      );
+      // Re-print progress bar so it sits at the bottom
+      process.stdout.write(
+        `Progress: [${filledBar}${emptyBar}] ${percentage}% (${processedImages}/${totalImages}) | Compressing: ${shortPath}`
       );
 
       infoList.push({
-        filename: file,
+        filename: relativePath,
         originalSizeBytes: originalSize,
         compressedSizeBytes: newSize,
-        originalPathBackup: backupPath,
+        originalPathBackup: isBackup ? backupPath : 'none',
       });
+
+      processedImages++;
     }
 
-    // 3. Create info.json in the temp backup folder
-    const infoFilePath = path.join(backupDir, 'info.json');
-    const infoData = {
-      targetFolder: inputFolder,
-      totalImagesProcessed: imagesToProcess.length,
-      minOriginalSizeSettingKb: parseFloat(minOriginalSizeInput),
-      maxSizeSettingKb: parseFloat(maxSizeInput),
-      maxHeightSettingPx: maxHeight || 'none',
-      processedAt: now.toISOString(),
-      backupFolder: backupDir,
-      images: infoList,
-    };
+    // Final complete bar
+    process.stdout.write(
+      `\r\x1b[KProgress: [${'█'.repeat(40)}] 100% (${totalImages}/${totalImages}) | All images processed successfully!\n`
+    );
 
-    await fs.writeFile(infoFilePath, JSON.stringify(infoData, null, 2));
-    console.log(`\nAll done! Compression info saved to: ${infoFilePath}`);
+    // 3. Create info.json ONLY if we backup
+    if (isBackup) {
+      const infoFilePath = path.join(backupDir, 'info.json');
+      const infoData = {
+        targetFolder: inputFolder,
+        totalImagesProcessed: imagesToProcess.length,
+        minOriginalSizeSettingKb: parseFloat(minOriginalSizeInput),
+        maxSizeSettingKb: parseFloat(maxSizeInput),
+        maxHeightSettingPx: maxHeight || 'none',
+        processedAt: now.toISOString(),
+        backupFolder: backupDir,
+        images: infoList,
+      };
+
+      await fs.writeFile(infoFilePath, JSON.stringify(infoData, null, 2));
+      console.log(`\nAll done! Compression info saved to: ${infoFilePath}`);
+    } else {
+      console.log(`\nAll done! (No backup/info.json saved)`);
+    }
   } catch (error) {
     console.error('An error occurred:', error);
   } finally {
