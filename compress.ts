@@ -38,6 +38,9 @@ async function compressImageToSize(
   let bestBuffer: any = fileBuffer;
   let bestSize = fileBuffer.length;
 
+  let smallestBuffer: any = null;
+  let smallestSize = Infinity;
+
   // Binary search for optimal quality that fits within maxSizeBytes
   while (minQ <= maxQ) {
     const midQ = Math.floor((minQ + maxQ) / 2);
@@ -63,6 +66,11 @@ async function compressImageToSize(
           .toBuffer();
       }
 
+      if (currentBuffer.length < smallestSize) {
+        smallestSize = currentBuffer.length;
+        smallestBuffer = currentBuffer;
+      }
+
       if (currentBuffer.length <= maxSizeBytes) {
         bestBuffer = currentBuffer;
         bestSize = currentBuffer.length;
@@ -74,6 +82,13 @@ async function compressImageToSize(
       console.error(`\nError processing at quality ${midQ}`, err);
       break;
     }
+  }
+
+  // If we never found a buffer that fits the exact max size constraint,
+  // fallback to the most compressed version we were able to generate!
+  if (bestSize > maxSizeBytes && smallestBuffer) {
+    bestBuffer = smallestBuffer;
+    bestSize = smallestSize;
   }
 
   await fs.writeFile(outputPath, bestBuffer);
